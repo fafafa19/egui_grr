@@ -6,8 +6,8 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-use egui::{CtxRef};
-use epaint::{FontImage, TextureId};
+use egui::CtxRef;
+use epaint::TextureId;
 use egui_grr::{Painter, PainterSettings};
 
 
@@ -58,8 +58,9 @@ fn main() -> anyhow::Result<()> {
         let pixels : Vec<u8> = image::open("examples/grr.png").unwrap().to_rgba8().to_vec();
         let mut painter = Painter::new(&grr, PainterSettings{
             ibo_size: 10000,
-            vbo_size: 10000
-        });
+            vbo_size: 10000,
+            max_texture_side: 4096
+        })?;
 
         let mut first_paint = true;
 
@@ -78,10 +79,8 @@ fn main() -> anyhow::Result<()> {
                     event,
                     ..
                 } => {
-                    let request = winit.on_event(&ctx, &event);
-                    if request {
-                        window.request_redraw();
-                    }
+                    winit.on_event(&ctx, &event);
+
                 }
                 Event::LoopDestroyed => {
                     painter.free(&grr);
@@ -104,28 +103,26 @@ fn main() -> anyhow::Result<()> {
                             w: window.inner_size().width as _,
                             h: window.inner_size().height as _,
                         }]);
-                        grr.clear_attachment(Framebuffer::DEFAULT, ClearAttachment::ColorFloat(0, [0.3, 0.4, 0.1, 1.0]));
+                        grr.clear_attachment(Framebuffer::DEFAULT, ClearAttachment::ColorFloat(0, [1.0, 1.0, 1.0, 1.0]));
                         grr.clear_attachment(Framebuffer::DEFAULT, ClearAttachment::DepthStencil(1.0, 0));
 
                         let input = winit.take_egui_input(&window);
 
                         let (output, shapes) = ctx.run(input, |ui|{
-                            egui::Area::new("si").show(&ui, |ui| {
+                            egui::Area::new("hi").show(&ui, |ui| {
                                 ui.heading("hello world!");
                                 if ui.button("quit").clicked() {
-                                    println!("quit");
                                     *control_flow = ControlFlow::Exit;
                                 }
-                                ui.image(TextureId::User(0), (200.0, 200.0));
+                                ui.image(TextureId::User(0), (454.0, 302.0));
                                 ui.code_editor(&mut text);
                             });
                         });
                         if first_paint{
-                            painter.set_user_texture(&grr, 0, &pixels, 454, 302);
+                            painter.set_font_texture(&grr, TextureId::Egui, &ctx.font_image()).unwrap();
+                            painter.set_user_texture(&grr, 0, &pixels, 454, 302).unwrap();
                             first_paint = !first_paint;
                         }
-                        //dont do this
-                        painter.set_font_texture(&grr, TextureId::Egui, &ctx.font_image());
 
                         winit.handle_output(&window, &ctx, output);
 
@@ -141,6 +138,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
                 Event::MainEventsCleared => {
+                    window.request_redraw();
                 }
                 _ => (),
             }

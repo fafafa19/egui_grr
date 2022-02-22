@@ -1,8 +1,7 @@
-use epaint::{FontImage, TextureId};
-use grr::{BaseFormat, BlendChannel, BlendFactor, BlendOp, ClearAttachment, ColorBlend, ColorBlendAttachment, Constant, Extent, Filter, Format, FormatLayout, Framebuffer, HostImageCopy, ImageType, MemoryFlags, MemoryLayout, Offset, Region, SamplerAddress, SamplerDesc, ShaderFlags, ShaderSource, SubresourceLayers, VertexAttributeDesc, VertexBufferView, Viewport};
+use grr::{BaseFormat, BlendChannel, BlendFactor, BlendOp, ColorBlend, ColorBlendAttachment, Constant, Extent, Filter, Format, FormatLayout, HostImageCopy, ImageType, MemoryFlags, MemoryLayout, Offset, Region, SamplerAddress, SamplerDesc, ShaderFlags, ShaderSource, SubresourceLayers, VertexAttributeDesc, VertexBufferView, Viewport};
 use {
     ahash::AHashMap,
-    egui::{emath::Rect, epaint::Mesh},
+    egui::{emath::Rect, epaint::Mesh, epaint::TextureId},
 };
 
 pub struct Painter {
@@ -18,21 +17,23 @@ pub struct Painter {
 #[derive(Copy, Clone, Debug)]
 pub struct PainterSettings{
     pub ibo_size : u64,
-    pub vbo_size : u64
+    pub vbo_size : u64,
+    pub max_texture_side: usize
 }
 
 impl std::default::Default for PainterSettings {
     fn default() -> Self {
         Self{
             ibo_size: 10048,
-            vbo_size: 10096
+            vbo_size: 10096,
+            max_texture_side: 4096,
         }
     }
 }
 
 impl Painter {
-    pub fn new(device: &grr::Device, settings : PainterSettings) -> Painter {
-        let max_texture_side = 4096;
+    pub fn new(device: &grr::Device, settings : PainterSettings) -> grr::Result<Painter> {
+        let max_texture_side = settings.max_texture_side;
 
         let vertex_array = unsafe {
             let vao = device.create_vertex_array(&[VertexAttributeDesc {
@@ -51,29 +52,28 @@ impl Painter {
                 format: grr::VertexFormat::Xyzw8Uint,
                 offset: (4 * std::mem::size_of::<f32>()) as _,
             }
-            ]).expect("couldnt create a vertex array");
+            ])?;
             device.object_name(vao, "egui vao");
             vao
         };
 
         let vbo = unsafe{
             device.create_buffer(settings.vbo_size, MemoryFlags::DYNAMIC)
-        }.unwrap();
+        }?;
 
         let ibo = unsafe {
             device.create_buffer(settings.ibo_size, MemoryFlags::DYNAMIC)
-        }.unwrap();
+        }?;
 
         let vertex_shader = unsafe {
             let bytes = include_bytes!("shader/egui_vertex.glsl");
             device.create_shader(grr::ShaderStage::Vertex, ShaderSource::Glsl, bytes, ShaderFlags::VERBOSE)
-        }
-            .expect("Failed to compile shader");
+        }?;
 
         let fragment_shader = unsafe {
             let bytes = include_bytes!("shader/egui_fragment.glsl");
             device.create_shader(grr::ShaderStage::Fragment, ShaderSource::Glsl, bytes, ShaderFlags::VERBOSE)
-        }.expect("Failed to compile shader");
+        }?;
 
         let pipeline = unsafe {
             device.create_graphics_pipeline(
@@ -87,7 +87,7 @@ impl Painter {
                     task_shader: None,
                 },
                 grr::PipelineFlags::VERBOSE,
-            ).expect("failed to create a egui graphics pipeline")
+            )?
         };
         let sampler = unsafe {
             device.create_sampler(SamplerDesc {
@@ -100,13 +100,13 @@ impl Painter {
                 compare: None,
                 border_color: [0.0, 0.0, 0.0, 1.0],
             })
-        }.expect("err sampler");
+        }?;
 
         unsafe {
             device.delete_shaders(&[vertex_shader, fragment_shader]);
         }
 
-        Painter {
+        Ok(Painter {
             ibo,
             vbo,
             sampler,
@@ -114,7 +114,7 @@ impl Painter {
             pipeline,
             vertex_array,
             textures: Default::default(),
-        }
+        })
     }
 
     pub fn max_texture_side(&self) -> usize {
@@ -252,7 +252,7 @@ impl Painter {
         device: &grr::Device,
         tex_id: egui::TextureId,
         delta: &egui::epaint::FontImage,
-    ) {
+    ) -> grr::Result<()> {
 
         let mut pixels = Vec::with_capacity(delta.height * delta.width * 4);
         for c in delta.srgba_pixels(1.0){
@@ -288,14 +288,16 @@ impl Painter {
                 });
             };
         } else {
-            let img = unsafe { self.copy_host_to_tex(&device, &pixels, width as u32, height as u32)};
+            let img = unsafe { self.copy_host_to_tex(&device, &pixels, width as u32, height as u32)?};
             self.textures.insert(tex_id, img);
         }
+        Ok(())
     }
-    pub fn set_user_texture(&mut self, device : &grr::Device, id : u64, pixels : &[u8], width : u32, height : u32){
+    pub fn set_user_texture(&mut self, device : &grr::Device, id : u64, pixels : &[u8], width : u32, height : u32) -> grr::Result<()>{
 
-        let tex = unsafe { self.copy_host_to_tex(device, &pixels, width, height) } ;
+        let tex = unsafe { self.copy_host_to_tex(device, &pixels, width, height) }? ;
         self.textures.insert(TextureId::User(id), tex);
+        Ok(())
     }
 
     pub unsafe fn free_texture(&mut self, tex_id: egui::TextureId, device: &grr::Device) {
@@ -304,13 +306,13 @@ impl Painter {
             device.delete_image(img);
         }
     }
-    unsafe fn copy_host_to_tex(&mut self, device : &grr::Device, pixels : &[u8], width : u32, height : u32) -> (grr::ImageView, grr::Image) {
+    unsafe fn copy_host_to_tex(&mut self, device : &grr::Device, pixels : &[u8], width : u32, height : u32) -> grr::Result<(grr::ImageView, grr::Image)> {
         let (tex, view) = device.create_image_and_view(ImageType::D2 {
             width,
             height,
             layers: 1,
             samples: 1,
-        }, grr::Format::R8G8B8A8_SRGB, 1).unwrap();
+        }, grr::Format::R8G8B8A8_SRGB, 1)?;
 
         device.copy_host_to_image(pixels, tex, HostImageCopy {
             host_layout: grr::MemoryLayout {
@@ -335,7 +337,7 @@ impl Painter {
                 depth: 1,
             },
         });
-        (view, tex)
+        Ok((view, tex))
     }
 
     fn get_texture(&self, texture_id: egui::TextureId) -> Option<&(grr::ImageView, grr::Image)> {
