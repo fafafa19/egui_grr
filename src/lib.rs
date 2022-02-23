@@ -4,6 +4,59 @@ use {
     egui::{emath::Rect, epaint::Mesh, epaint::TextureId},
 };
 
+
+const VERTEX_SRC : &str = r#"#version 460 core
+
+layout (location = 0) uniform vec2 u_screen_size;
+
+layout (location = 0) in vec2 v_pos;
+layout (location = 1) in vec2 v_tc;
+layout (location = 2) in uvec4 v_srgba;
+
+
+
+layout (location = 0) out vec4 a_srgba;
+layout (location = 1) out vec2 a_tc;
+
+// 0-1 linear  from  0-255 sRGB
+vec3 linear_from_srgb(vec3 srgb) {
+    bvec3 cutoff = lessThan(srgb, vec3(10.31475));
+    vec3 lower = srgb / vec3(3294.6);
+    vec3 higher = pow((srgb + vec3(14.025)) / vec3(269.025), vec3(2.4));
+    return mix(higher, lower, vec3(cutoff));
+}
+
+vec4 linear_from_srgba(vec4 srgba) {
+    return vec4(linear_from_srgb(srgba.rgb), srgba.a / 255.0);
+}
+
+void main() {
+    gl_Position = vec4(
+                      2.0 * v_pos.x / u_screen_size.x - 1.0,
+                      1.0 - 2.0 * v_pos.y / u_screen_size.y,
+                      0.0,
+                      1.0);
+    // egui encodes vertex colors in gamma spaces, so we must decode the colors here:
+    a_srgba = linear_from_srgba(v_srgba);
+    a_tc = v_tc;
+}"#;
+
+const FRAGMENT_SRC : &str = r#"#version 460 core
+
+layout (binding = 0) uniform sampler2D u_sampler;
+
+layout (location = 0) in vec4 a_rgba;
+layout (location = 1) in vec2 a_tc;
+
+out vec4 frag_color;
+
+void main() {
+// The texture is set up with `SRGB8_ALPHA8`, so no need to decode here!
+vec4 texture_rgba = texture(u_sampler, a_tc);
+/// Multiply vertex color with texture color (in linear space).
+frag_color = a_rgba * texture_rgba;
+}"#;
+
 pub struct Painter {
     max_texture_side: usize,
     ibo : grr::Buffer,
@@ -66,12 +119,12 @@ impl Painter {
         }?;
 
         let vertex_shader = unsafe {
-            let bytes = include_bytes!("shader/egui_vertex.glsl");
+            let bytes = VERTEX_SRC.as_bytes();
             device.create_shader(grr::ShaderStage::Vertex, ShaderSource::Glsl, bytes, ShaderFlags::VERBOSE)
         }?;
 
         let fragment_shader = unsafe {
-            let bytes = include_bytes!("shader/egui_fragment.glsl");
+            let bytes = FRAGMENT_SRC.as_bytes();
             device.create_shader(grr::ShaderStage::Fragment, ShaderSource::Glsl, bytes, ShaderFlags::VERBOSE)
         }?;
 

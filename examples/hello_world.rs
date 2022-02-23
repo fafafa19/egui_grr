@@ -23,7 +23,7 @@ fn main() -> anyhow::Result<()> {
         let context = GlContext::create(
             &window,
             GlConfig {
-                version: (4, 5),
+                version: (4, 6),
                 profile: Profile::Core,
                 red_bits: 8,
                 blue_bits: 8,
