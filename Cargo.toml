@@ -6,11 +6,7 @@ edition = "2021"
 [dependencies]
 grr = { git = "https://github.com/p0gchamp/grr.git" }
 bytemuck = "1.7.0"
-egui = { version = "0.16.1", default-features = false, features = [
-    "convert_bytemuck",
-    "single_threaded",
-] }
-epaint = {version = "0.16.0", features = ["convert_bytemuck"]}
+egui = { version = "0.18.1", features = ["bytemuck"] }
 ahash = "0.7.6"
 
 [dev-dependencies]
@@ -18,8 +14,7 @@ anyhow = "1.0.53"
 raw-gl-context = "0.1.2"
 image = { version = "0.23", default-features = false, features = ["png"] }
 winit = "0.26.1"
-egui-winit = "0.16.0"
-egui = {version = "0.16.1", features = ["single_threaded"]}
+egui-winit = "0.18.0"
 
 
 [features]

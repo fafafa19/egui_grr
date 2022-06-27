@@ -1,3 +1,5 @@
+use egui::epaint::{ClippedShape, Primitive};
+use egui::{ClippedPrimitive, FontImage, ImageData, Shape, TexturesDelta};
 use grr::{BaseFormat, BlendChannel, BlendFactor, BlendOp, ColorBlend, ColorBlendAttachment, Constant, Extent, Filter, Format, FormatLayout, HostImageCopy, ImageType, MemoryFlags, MemoryLayout, Offset, Region, SamplerAddress, SamplerDesc, ShaderFlags, ShaderSource, SubresourceLayers, VertexAttributeDesc, VertexBufferView, Viewport};
 use {
     ahash::AHashMap,
@@ -179,13 +181,46 @@ impl Painter {
         device: &grr::Device,
         pixels_per_point: f32,
         dimensions: [u32; 2],
-        cipped_meshes: Vec<egui::ClippedMesh>,
+        cipped_meshes: Vec<ClippedPrimitive>,
+        textures_delta: TexturesDelta
     ) {
-        for egui::ClippedMesh(clip_rect, mesh) in cipped_meshes {
-            self.paint_mesh(device, pixels_per_point, clip_rect, dimensions, &mesh);
+        self.update_textures(device, &textures_delta);
+        for c in cipped_meshes {
+            self.paint_mesh(device, pixels_per_point, c.clip_rect, dimensions, &c.primitive);
+        }
+        for i in textures_delta.free{
+            unsafe { self.free_texture(i, device) };
         }
     }
+    fn update_textures(&mut self, device : &grr::Device, textures : &TexturesDelta){
 
+        for (id, data) in &textures.set{
+
+            if let Some(pos) = data.pos{
+                //TODO: update subregion
+                return;
+            }
+
+
+            match &data.image{
+                ImageData::Font(im) => {
+                    self.set_font_texture(&device, id.clone(), &im).unwrap();
+                }
+                ImageData::Color(im) => {
+
+                    let mut pixels = Vec::with_capacity(4 * im.pixels.len());
+                    for pix in &im.pixels{
+                        pixels.push(pix.r());
+                        pixels.push(pix.g());
+                        pixels.push(pix.b());
+                        pixels.push(pix.a());
+                    }
+
+                    self.set_color_texture(&device, id.clone(), &pixels,im.size[0] as _, im.size[1] as _).unwrap();
+                }
+            }
+        }
+    }
     #[inline(never)] // Easier profiling
     fn paint_mesh(
         &mut self,
@@ -193,12 +228,22 @@ impl Painter {
         pixels_per_point: f32,
         clip_rect: Rect,
         dimensions: [u32; 2],
-        mesh: &Mesh,
+        mesh: &Primitive,
     ) {
-        debug_assert!(mesh.is_valid());
-        if !mesh.is_valid(){
+
+
+
+
+        let mut opt = None;
+        if let Primitive::Mesh(m) = mesh{
+            opt = Some(m);
+        }else{
             return;
         }
+        let mesh = opt.unwrap();
+
+
+
         {
             #[repr(C)]
             #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -303,19 +348,19 @@ impl Painter {
     pub fn set_font_texture(
         &mut self,
         device: &grr::Device,
-        tex_id: egui::TextureId,
-        delta: &egui::epaint::FontImage,
+        tex_id: TextureId,
+        delta: &FontImage,
     ) -> grr::Result<()> {
 
-        let mut pixels = Vec::with_capacity(delta.height * delta.width * 4);
+        let mut pixels = Vec::with_capacity(delta.height() * delta.width() * 4);
         for c in delta.srgba_pixels(1.0){
             pixels.push(c.r());
             pixels.push(c.g());
             pixels.push(c.b());
             pixels.push(c.a());
         }
-        let width = delta.width;
-        let height = delta.height;
+        let width = delta.width();
+        let height = delta.height();
 
         if let Some((_view, image)) = self.textures.get(&tex_id) {
             unsafe {
@@ -346,10 +391,10 @@ impl Painter {
         }
         Ok(())
     }
-    pub fn set_user_texture(&mut self, device : &grr::Device, id : u64, pixels : &[u8], width : u32, height : u32) -> grr::Result<()>{
+    pub fn set_color_texture(&mut self, device : &grr::Device, id : TextureId, pixels : &[u8], width : u32, height : u32) -> grr::Result<()>{
 
         let tex = unsafe { self.copy_host_to_tex(device, &pixels, width, height) }? ;
-        self.textures.insert(TextureId::User(id), tex);
+        self.textures.insert(id, tex);
         Ok(())
     }
 

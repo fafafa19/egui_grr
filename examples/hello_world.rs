@@ -1,3 +1,4 @@
+use egui::{Color32, ColorImage, Context, TextureId, vec2};
 use grr::{BlendChannel, BlendFactor, BlendOp, ClearAttachment, ColorBlend, ColorBlendAttachment, Framebuffer, Region, Viewport};
 use raw_gl_context::{GlConfig, GlContext, Profile};
 use winit::{
@@ -6,8 +7,7 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
 };
-use egui::CtxRef;
-use epaint::TextureId;
+use egui::panel::Side;
 use egui_grr::{Painter, PainterSettings};
 
 
@@ -41,9 +41,9 @@ fn main() -> anyhow::Result<()> {
 
         context.make_current();
 
-        let mut ctx = CtxRef::default();
+        let mut ctx = Context::default();
 
-        let mut winit = egui_winit::State::new(&window);
+        let mut winit = egui_winit::State::new(2048, &window);
 
         let grr = grr::Device::new(
             |symbol| context.get_proc_address(symbol) as *const _,
@@ -56,16 +56,21 @@ fn main() -> anyhow::Result<()> {
         );
 
         let pixels : Vec<u8> = image::open("examples/grr.png").unwrap().to_rgba8().to_vec();
-        let mut painter = Painter::new(&grr, PainterSettings{
-            ibo_size: 10000,
-            vbo_size: 10000,
-            max_texture_side: 4096
-        })?;
+
+
+        let mut painter = Painter::new(&grr, PainterSettings::default())?;
 
         let mut first_paint = true;
 
+        let mut name = String::new();
 
-        let mut text = String::with_capacity(128);
+        let mut age = 0;
+
+        let img = ColorImage::from_rgba_unmultiplied([454, 302], &pixels);
+
+        let handle = ctx.load_texture("grr-image", img);
+
+
 
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
@@ -104,34 +109,43 @@ fn main() -> anyhow::Result<()> {
                             h: window.inner_size().height as _,
                         }]);
                         grr.clear_attachment(Framebuffer::DEFAULT, ClearAttachment::ColorFloat(0, [1.0, 1.0, 1.0, 1.0]));
-                        grr.clear_attachment(Framebuffer::DEFAULT, ClearAttachment::DepthStencil(1.0, 0));
 
                         let input = winit.take_egui_input(&window);
 
-                        let (output, shapes) = ctx.run(input, |ui|{
-                            egui::Area::new("hi").show(&ui, |ui| {
-                                ui.heading("hello world!");
-                                if ui.button("quit").clicked() {
-                                    *control_flow = ControlFlow::Exit;
+                        let mut output = ctx.run(input, |ctx|{
+                            egui::SidePanel::new(Side::Left, "side_panel").show(ctx, |ui|{
+                                ui.heading("My egui Application");
+                                ui.horizontal(|ui| {
+                                    ui.label("Your name: ");
+                                    ui.text_edit_singleline(&mut name);
+                                });
+                                ui.add(egui::Slider::new(&mut age, 0..=120).text("age"));
+                                if ui.button("Click each year").clicked() {
+                                    age += 1;
                                 }
-                                ui.image(TextureId::User(0), (454.0, 302.0));
-                                ui.code_editor(&mut text);
+                                ui.label(format!("Hello '{}', age {}", name, age));
+                                ui.image(handle.id(), vec2(handle.size()[0] as _, handle.size()[1] as _));
                             });
                         });
                         if first_paint{
-                            painter.set_font_texture(&grr, TextureId::Egui, &ctx.font_image()).unwrap();
-                            painter.set_user_texture(&grr, 0, &pixels, 454, 302).unwrap();
+
                             first_paint = !first_paint;
                         }
 
-                        winit.handle_output(&window, &ctx, output);
+                        winit.handle_platform_output(&window, &ctx, output.platform_output);
 
 
-                        let meshes = ctx.tessellate(shapes);
+                        let meshes = ctx.tessellate(output.shapes);
                         // draw things behind egui here
-                        painter.paint(&grr, ctx.pixels_per_point(), window.inner_size().into(), meshes);
+
+
+
+                        painter.paint(&grr, ctx.pixels_per_point(), window.inner_size().into(), meshes, output.textures_delta);
 
                         // draw things on top of egui here
+
+
+
                         context.swap_buffers();
 
 
